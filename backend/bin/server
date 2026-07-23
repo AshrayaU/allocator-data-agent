@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# backend/bin/server
+#
+# Manages the uvicorn process.
+#
+# Usage:
+#   bin/server start               # daemonize
+#   bin/server stop                # send SIGTERM (SIGKILL if needed)
+#   bin/server status              # show pid + port
+#   bin/server restart             # stop then start
+#   bin/server run                 # foreground (blocking) — for Heroku / debugging
+#   bin/server --port 9000 start   # override port
+# ---------------------------------------------------------------------------
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BACKEND_DIR="$(dirname "$SCRIPT_DIR")"
+RUN_DIR="$BACKEND_DIR/.run"
+PID_FILE="$RUN_DIR/server.pid"
+PORT_FILE="$RUN_DIR/server.port"
+LOG_FILE="$RUN_DIR/server.log"
+
+# Source .env on dev.
+if [[ -f "$BACKEND_DIR/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$BACKEND_DIR/.env"
+  set +a
+fi
+
+# SERVER_TYPE is required.
+if [[ -z "${SERVER_TYPE:-}" ]]; then
+  echo "ERROR: SERVER_TYPE is not set. Set it to 'dev' or 'production' in .env." >&2
+  exit 1
+fi
+
+cd "$BACKEND_DIR"
+
+# ---- Port resolution -------------------------------------------------------
+# --port flag → PORT env var → 8001
+PORT="${PORT:-8001}"
+EXTRA_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --port)
+      PORT="$2"
+      shift 2
+      ;;
+    *)
+      EXTRA_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+COMMAND="${EXTRA_ARGS[0]:-start}"
+
+# ---- Helpers ---------------------------------------------------------------
+_python_bin() {
+  if [[ -x "$BACKEND_DIR/.venv/bin/python" ]]; then
+    echo "$BACKEND_DIR/.venv/bin/python"
+  elif [[ -x "$BACKEND_DIR/.venv/Scripts/python.exe" ]]; then
+    echo "$BACKEND_DIR/.venv/Scripts/python.exe"
+  else
+    echo "python3"
+  fi
+}
+
+_uvicorn_args() {
+  local args=("app.main:app" "--host" "0.0.0.0" "--port" "$PORT")
+  if [[ "$SERVER_TYPE" == "production" ]]; then
+    args+=("--proxy-headers" "--workers" "4" "--worker-class" "uvicorn.workers.UvicornWorker")
+  else
+    args+=("--reload")
+  fi
+  echo "${args[@]}"
+}
+
+_is_running() {
+  [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null
+}
+
+# ---- Commands --------------------------------------------------------------
+cmd_start() {
+  if _is_running; then
+    echo "Server is already running (pid $(cat "$PID_FILE"), port $(cat "$PORT_FILE" 2>/dev/null || echo '?'))"
+    exit 0
+  fi
+  mkdir -p "$RUN_DIR"
+  echo "$PORT" > "$PORT_FILE"
+  echo "==> [server] Starting on port $PORT …"
+
+  if [[ "$SERVER_TYPE" == "production" ]]; then
+    # Production: gunicorn with uvicorn workers
+    nohup gunicorn app.main:app \
+      --worker-class uvicorn.workers.UvicornWorker \
+      --bind "0.0.0.0:$PORT" \
+      --proxy-headers \
+      --forwarded-allow-ips="*" \
+      --workers 4 \
+      >> "$LOG_FILE" 2>&1 &
+  else
+    # Dev: uvicorn with --reload
+    local PYTHON_BIN
+    PYTHON_BIN="$(_python_bin)"
+    nohup "$PYTHON_BIN" -m uvicorn app.main:app \
+      --host 0.0.0.0 \
+      --port "$PORT" \
+      --reload \
+      >> "$LOG_FILE" 2>&1 &
+  fi
+
+  local pid=$!
+  echo "$pid" > "$PID_FILE"
+
+  # Wait up to 10 s for the health endpoint to respond.
+  local attempts=0
+  until curl -sf "http://localhost:${PORT}/api/healthz" > /dev/null 2>&1; do
+    sleep 1
+    attempts=$((attempts + 1))
+    if [[ $attempts -ge 10 ]]; then
+      echo "WARNING: server did not respond to /api/healthz within 10s" >&2
+      break
+    fi
+  done
+
+  echo "==> [server] Running — pid $pid, port $PORT"
+  echo "  API → http://localhost:$PORT"
+}
+
+cmd_stop() {
+  if ! _is_running; then
+    echo "Server is not running."
+    return
+  fi
+  local pid
+  pid=$(cat "$PID_FILE")
+  echo "==> [server] Stopping pid $pid …"
+  kill "$pid" 2>/dev/null || true
+  # Give it 5 s then SIGKILL
+  local i=0
+  while kill -0 "$pid" 2>/dev/null && [[ $i -lt 5 ]]; do
+    sleep 1
+    i=$((i + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "==> [server] Force-killing pid $pid"
+    kill -9 "$pid" 2>/dev/null || true
+  fi
+  rm -f "$PID_FILE"
+  echo "==> [server] Stopped."
+}
+
+cmd_status() {
+  if _is_running; then
+    local pid port
+    pid=$(cat "$PID_FILE")
+    port=$(cat "$PORT_FILE" 2>/dev/null || echo "unknown")
+    echo "Server is running — pid $pid, port $port"
+  else
+    echo "Server is not running."
+  fi
+}
+
+cmd_restart() {
+  cmd_stop
+  cmd_start
+}
+
+cmd_run() {
+  # Foreground mode — used by Heroku (Procfile: web: bin/server --port $PORT run)
+  if [[ "$SERVER_TYPE" == "production" ]]; then
+    exec gunicorn app.main:app \
+      --worker-class uvicorn.workers.UvicornWorker \
+      --bind "0.0.0.0:$PORT" \
+      --proxy-headers \
+      --forwarded-allow-ips="*" \
+      --workers 4
+  else
+    local PYTHON_BIN
+    PYTHON_BIN="$(_python_bin)"
+    exec "$PYTHON_BIN" -m uvicorn app.main:app \
+      --host 0.0.0.0 \
+      --port "$PORT" \
+      --reload
+  fi
+}
+
+# ---- Dispatch --------------------------------------------------------------
+case "$COMMAND" in
+  start)   cmd_start ;;
+  stop)    cmd_stop ;;
+  status)  cmd_status ;;
+  restart) cmd_restart ;;
+  run)     cmd_run ;;
+  *)
+    echo "Usage: bin/server [--port PORT] {start|stop|status|restart|run}" >&2
+    exit 1
+    ;;
+esac

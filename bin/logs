@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+BACKEND_LOG="$ROOT_DIR/backend/.run/server.log"
+FRONTEND_LOG="$ROOT_DIR/frontend/.run/server.log"
+
+TARGET="${1:-both}"
+
+case "$TARGET" in
+  backend)
+    if [[ ! -f "$BACKEND_LOG" ]]; then
+      echo "ERROR: Backend log not found at $BACKEND_LOG" >&2
+      exit 1
+    fi
+    tail -f "$BACKEND_LOG" | while IFS= read -r line; do
+      printf '\033[36m[backend]\033[0m %s\n' "$line"
+    done
+    ;;
+  frontend)
+    if [[ ! -f "$FRONTEND_LOG" ]]; then
+      echo "ERROR: Frontend log not found at $FRONTEND_LOG" >&2
+      exit 1
+    fi
+    tail -f "$FRONTEND_LOG" | while IFS= read -r line; do
+      printf '\033[35m[frontend]\033[0m %s\n' "$line"
+    done
+    ;;
+  both)
+    [[ -f "$BACKEND_LOG" ]] || { echo "ERROR: Backend log not found at $BACKEND_LOG" >&2; exit 1; }
+    [[ -f "$FRONTEND_LOG" ]] || { echo "ERROR: Frontend log not found at $FRONTEND_LOG" >&2; exit 1; }
+    (
+      tail -f "$BACKEND_LOG" | while IFS= read -r line; do
+        printf '\033[36m[backend]\033[0m %s\n' "$line"
+      done
+    ) &
+    BACKEND_PID=$!
+    (
+      tail -f "$FRONTEND_LOG" | while IFS= read -r line; do
+        printf '\033[35m[frontend]\033[0m %s\n' "$line"
+      done
+    ) &
+    FRONTEND_PID=$!
+    trap "kill $BACKEND_PID $FRONTEND_PID 2>/dev/null; exit 0" INT TERM
+    wait
+    ;;
+  *)
+    echo "Usage: bin/logs [backend|frontend|both]" >&2
+    exit 1
+    ;;
+esac

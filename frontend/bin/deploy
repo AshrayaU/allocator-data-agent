@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Load .env if present (dev only — Heroku injects env vars directly)
+if [[ -f "$(dirname "$0")/../.env" ]]; then
+  # shellcheck disable=SC1091
+  set -a; source "$(dirname "$0")/../.env"; set +a
+fi
+
+if [[ -z "${SERVER_TYPE:-}" ]]; then
+  echo "ERROR: SERVER_TYPE is not set. Set it in .env (dev) or Heroku config vars (production)." >&2
+  exit 1
+fi
+
+cd "$(dirname "$0")/.."
+
+if [[ "$SERVER_TYPE" == "production" ]]; then
+  echo "[frontend/bin/deploy] SERVER_TYPE=production — skipping npm ci (Node buildpack handles it)"
+  exit 0
+fi
+
+echo "[frontend/bin/deploy] Installing dependencies..."
+if [[ -f package-lock.json ]]; then
+  npm ci
+else
+  npm install
+fi
+
+echo "[frontend/bin/deploy] Done."

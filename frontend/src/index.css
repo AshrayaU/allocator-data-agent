@@ -1,0 +1,83 @@
+@import "@allocator/design-system";
+
+/* App-specific overrides below. Avoid hardcoded colours — use tokens. */
+
+/* ---------- Chat message markdown content ---------- */
+.al-chat-bubble > *:first-child { margin-top: 0; }
+.al-chat-bubble > *:last-child { margin-bottom: 0; }
+
+.al-chat-bubble p {
+  margin: 0.5em 0;
+  line-height: 1.55;
+}
+
+.al-chat-bubble ul,
+.al-chat-bubble ol {
+  margin: 0.5em 0;
+  padding-left: 1.25em;
+}
+.al-chat-bubble li { margin: 0.2em 0; }
+.al-chat-bubble ul { list-style-type: disc; }
+.al-chat-bubble ol { list-style-type: decimal; }
+
+.al-chat-bubble strong { font-weight: 600; }
+
+.al-chat-bubble code {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.85em;
+  background: hsl(var(--background) / 0.6);
+  border-radius: 0.25em;
+  padding: 0.15em 0.35em;
+}
+.al-chat-bubble pre {
+  background: hsl(var(--background) / 0.6);
+  border-radius: 0.375rem;
+  padding: 0.75em;
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+.al-chat-bubble pre code {
+  background: none;
+  padding: 0;
+}
+
+.al-chat-bubble a {
+  color: hsl(var(--primary));
+  text-decoration: underline;
+  text-decoration-color: hsl(var(--primary) / 0.4);
+}
+
+.al-chat-bubble table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.6em 0;
+  font-size: 0.9em;
+  overflow: hidden;
+  border-radius: 0.375rem;
+}
+.al-chat-bubble th,
+.al-chat-bubble td {
+  border: 1px solid hsl(var(--border));
+  padding: 0.4em 0.6em;
+  text-align: left;
+}
+.al-chat-bubble th {
+  background: hsl(var(--background) / 0.5);
+  font-weight: 600;
+}
+
+/* ---------- Typing indicator ---------- */
+.al-typing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: hsl(var(--muted-foreground));
+  animation: al-typing-bounce 1.2s ease-in-out infinite;
+}
+.al-typing-dot:nth-child(2) { animation-delay: 0.15s; }
+.al-typing-dot:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes al-typing-bounce {
+  0%, 60%, 100% { opacity: 0.35; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-2px); }
+}

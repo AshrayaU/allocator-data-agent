@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+FRONTEND_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+RUN_DIR="$FRONTEND_DIR/.run"
+PID_FILE="$RUN_DIR/server.pid"
+PORT_FILE="$RUN_DIR/server.port"
+LOG_FILE="$RUN_DIR/server.log"
+
+# Load .env if present
+if [[ -f "$FRONTEND_DIR/.env" ]]; then
+  # shellcheck disable=SC1091
+  set -a; source "$FRONTEND_DIR/.env"; set +a
+fi
+
+if [[ -z "${SERVER_TYPE:-}" ]]; then
+  echo "ERROR: SERVER_TYPE is not set. Set it in .env (dev) or Heroku config vars (production)." >&2
+  exit 1
+fi
+
+# Parse --port flag
+PORT="${SERVER_PORT:-5174}"
+ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --port)
+      PORT="$2"
+      shift 2
+      ;;
+    *)
+      ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+COMMAND="${ARGS[0]:-start}"
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+is_running() {
+  if [[ -f "$PID_FILE" ]]; then
+    local pid
+    pid=$(cat "$PID_FILE")
+    kill -0 "$pid" 2>/dev/null
+  else
+    return 1
+  fi
+}
+
+wait_for_port() {
+  local port="$1"
+  local attempts=0
+  local max=30
+  while ! curl -sf "http://localhost:${port}" > /dev/null 2>&1; do
+    attempts=$((attempts + 1))
+    if [[ $attempts -ge $max ]]; then
+      echo "[frontend/bin/server] Timed out waiting for port $port" >&2
+      return 1
+    fi
+    sleep 1
+  done
+}
+
+start_server() {
+  if is_running; then
+    echo "[frontend/bin/server] Already running (pid $(cat "$PID_FILE"), port $(cat "$PORT_FILE" 2>/dev/null || echo '?'))"
+    return 0
+  fi
+
+  mkdir -p "$RUN_DIR"
+  echo "$PORT" > "$PORT_FILE"
+
+  if [[ "$SERVER_TYPE" == "production" ]]; then
+    # Serve the pre-built dist/ via a simple static server
+    cd "$FRONTEND_DIR"
+    npx --yes serve dist --listen "$PORT" >> "$LOG_FILE" 2>&1 &
+  else
+    # Dev: Vite dev server
+    cd "$FRONTEND_DIR"
+    npx vite --port "$PORT" >> "$LOG_FILE" 2>&1 &
+  fi
+
+  local pid=$!
+  echo "$pid" > "$PID_FILE"
+  echo "[frontend/bin/server] Starting on port $PORT (pid $pid)..."
+  wait_for_port "$PORT"
+  echo "[frontend/bin/server] Ready → http://localhost:$PORT"
+}
+
+stop_server() {
+  if ! is_running; then
+    echo "[frontend/bin/server] Not running."
+    return 0
+  fi
+  local pid
+  pid=$(cat "$PID_FILE")
+  echo "[frontend/bin/server] Stopping pid $pid..."
+  if command -v taskkill >/dev/null 2>&1; then
+    # npx spawns vite as a separate child process — on Windows, killing just
+    # the parent leaves that child (and its esbuild/rollup grandchildren)
+    # running, which then locks node_modules files on the next install.
+    taskkill //F //T //PID "$pid" >/dev/null 2>&1 || true
+  else
+    kill "$pid" 2>/dev/null || true
+    local attempts=0
+    while kill -0 "$pid" 2>/dev/null; do
+      attempts=$((attempts + 1))
+      if [[ $attempts -ge 10 ]]; then
+        kill -9 "$pid" 2>/dev/null || true
+        break
+      fi
+      sleep 1
+    done
+  fi
+  rm -f "$PID_FILE" "$PORT_FILE"
+  echo "[frontend/bin/server] Stopped."
+}
+
+# ── commands ─────────────────────────────────────────────────────────────────
+
+case "$COMMAND" in
+  start)
+    start_server
+    ;;
+  stop)
+    stop_server
+    ;;
+  restart)
+    stop_server
+    start_server
+    ;;
+  status)
+    if is_running; then
+      echo "[frontend/bin/server] Running — pid $(cat "$PID_FILE"), port $(cat "$PORT_FILE" 2>/dev/null || echo '?')"
+    else
+      echo "[frontend/bin/server] Not running."
+    fi
+    ;;
+  run)
+    # Foreground (blocking) — used by Heroku Procfile
+    mkdir -p "$RUN_DIR"
+    echo "$PORT" > "$PORT_FILE"
+    if [[ "$SERVER_TYPE" == "production" ]]; then
+      cd "$FRONTEND_DIR"
+      exec npx --yes serve dist --listen "$PORT"
+    else
+      cd "$FRONTEND_DIR"
+      exec npx vite --port "$PORT"
+    fi
+    ;;
+  *)
+    echo "Usage: bin/server [--port PORT] {start|stop|restart|status|run}" >&2
+    exit 1
+    ;;
+esac

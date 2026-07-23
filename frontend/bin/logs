@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+FRONTEND_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+LOG_FILE="$FRONTEND_DIR/.run/server.log"
+
+if [[ ! -f "$LOG_FILE" ]]; then
+  echo "[frontend/bin/logs] No log file found at $LOG_FILE" >&2
+  exit 1
+fi
+
+# Prefix each line with a magenta [frontend] label
+tail -f "$LOG_FILE" | while IFS= read -r line; do
+  printf '\033[35m[frontend]\033[0m %s\n' "$line"
+done

@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# backend/bin/task
+#
+# Runs a background task by name.
+#
+# Usage:
+#   bin/task sync_data
+#   bin/task task_a task_b      # run multiple tasks in sequence
+#   bin/task --help             # list available tasks
+#
+# Each task lives in tasks/<name>.py and must expose a run() function.
+# The function is called via asyncio.run(mod.run()) so it can be async or sync.
+#
+# This is also the command Heroku Scheduler calls, e.g.:
+#   bin/task every_ten_minutes
+# ---------------------------------------------------------------------------
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BACKEND_DIR="$(dirname "$SCRIPT_DIR")"
+
+# Source .env on dev.
+if [[ -f "$BACKEND_DIR/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$BACKEND_DIR/.env"
+  set +a
+fi
+
+# SERVER_TYPE is required.
+if [[ -z "${SERVER_TYPE:-}" ]]; then
+  echo "ERROR: SERVER_TYPE is not set. Set it to 'dev' or 'production' in .env." >&2
+  exit 1
+fi
+
+cd "$BACKEND_DIR"
+
+_python() {
+  if [[ -x "$BACKEND_DIR/.venv/bin/python" ]]; then
+    "$BACKEND_DIR/.venv/bin/python" "$@"
+  else
+    python3 "$@"
+  fi
+}
+
+if [[ $# -eq 0 || "${1:-}" == "--help" ]]; then
+  echo "Usage: bin/task <task_name> [task_name …]"
+  echo ""
+  echo "Available tasks:"
+  if [[ -d "$BACKEND_DIR/tasks" ]]; then
+    for f in "$BACKEND_DIR/tasks"/*.py; do
+      [[ -f "$f" ]] || continue
+      basename "$f" .py
+    done
+  else
+    echo "  (no tasks directory found)"
+  fi
+  exit 0
+fi
+
+for TASK_NAME in "$@"; do
+  TASK_FILE="$BACKEND_DIR/tasks/${TASK_NAME}.py"
+  if [[ ! -f "$TASK_FILE" ]]; then
+    echo "ERROR: Task not found: tasks/${TASK_NAME}.py" >&2
+    exit 1
+  fi
+  echo "==> [task] Running: $TASK_NAME"
+  _python -c "
+import asyncio, importlib.util, sys
+spec = importlib.util.spec_from_file_location('task_module', '${TASK_FILE}')
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+asyncio.run(mod.run())
+"
+  echo "==> [task] $TASK_NAME complete."
+done

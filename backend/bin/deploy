@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# backend/bin/deploy
+#
+# When SERVER_TYPE=dev:
+#   - Creates .venv if absent
+#   - Installs requirements.txt into .venv
+#   - Runs bin/db migrate
+#
+# When SERVER_TYPE=production:
+#   - Skips .venv creation (Heroku buildpack handles the environment)
+#   - Installs requirements.txt
+#   - Runs bin/db migrate
+#
+# Called by: Heroku release phase (Procfile: release: bin/deploy)
+#            and manually during local development
+# ---------------------------------------------------------------------------
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BACKEND_DIR="$(dirname "$SCRIPT_DIR")"
+
+# Source .env on dev so SERVER_TYPE is available when running directly.
+if [[ -f "$BACKEND_DIR/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$BACKEND_DIR/.env"
+  set +a
+fi
+
+# SERVER_TYPE is required.
+if [[ -z "${SERVER_TYPE:-}" ]]; then
+  echo "ERROR: SERVER_TYPE is not set. Set it to 'dev' or 'production' in .env." >&2
+  exit 1
+fi
+
+cd "$BACKEND_DIR"
+
+if [[ "$SERVER_TYPE" == "dev" ]]; then
+  echo "==> [deploy] SERVER_TYPE=dev — setting up virtualenv"
+  if [[ ! -d ".venv" ]]; then
+    echo "==> [deploy] Creating .venv"
+    python3 -m venv .venv
+  fi
+  if [[ -x ".venv/bin/python" ]]; then
+    PYTHON=".venv/bin/python"
+  else
+    PYTHON=".venv/Scripts/python.exe"
+  fi
+  echo "==> [deploy] Installing dependencies"
+  "$PYTHON" -m pip install --quiet --upgrade pip
+  "$PYTHON" -m pip install --quiet -r requirements.txt
+else
+  echo "==> [deploy] SERVER_TYPE=production — skipping .venv creation"
+  echo "==> [deploy] Installing dependencies"
+  pip install --quiet -r requirements.txt
+fi
+
+echo "==> [deploy] Running migrations"
+bin/db migrate
+
+echo "==> [deploy] Done."

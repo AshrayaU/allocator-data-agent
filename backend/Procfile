@@ -1,0 +1,2 @@
+release: bin/deploy
+web: bin/server --port $PORT run

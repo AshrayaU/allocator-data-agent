@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+
+# Load .env files from each half (they carry SERVER_TYPE)
+if [[ -f "$ROOT_DIR/backend/.env" ]]; then
+  # shellcheck disable=SC1091
+  set -a; source "$ROOT_DIR/backend/.env"; set +a
+fi
+if [[ -f "$ROOT_DIR/frontend/.env" ]]; then
+  # shellcheck disable=SC1091
+  set -a; source "$ROOT_DIR/frontend/.env"; set +a
+fi
+
+if [[ -z "${SERVER_TYPE:-}" ]]; then
+  echo "ERROR: SERVER_TYPE is not set. Make sure backend/.env and frontend/.env exist and contain SERVER_TYPE=dev." >&2
+  exit 1
+fi
+
+COMMAND="${1:-start}"
+
+case "$COMMAND" in
+  start)
+    echo "==> Starting backend..."
+    "$ROOT_DIR/backend/bin/server" start
+
+    echo "==> Starting frontend..."
+    "$ROOT_DIR/frontend/bin/server" start
+
+    echo ""
+    echo "  API      → http://localhost:8001"
+    echo "  Frontend → http://localhost:5174"
+    echo ""
+    ;;
+  stop)
+    echo "==> Stopping frontend..."
+    "$ROOT_DIR/frontend/bin/server" stop
+
+    echo "==> Stopping backend..."
+    "$ROOT_DIR/backend/bin/server" stop
+    ;;
+  restart)
+    "$0" stop
+    "$0" start
+    ;;
+  status)
+    "$ROOT_DIR/backend/bin/server" status
+    "$ROOT_DIR/frontend/bin/server" status
+    ;;
+  *)
+    echo "Usage: bin/server {start|stop|restart|status}" >&2
+    exit 1
+    ;;
+esac
