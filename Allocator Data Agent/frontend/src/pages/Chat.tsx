@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Bot, RefreshCw, SendHorizontal, Square, User } from 'lucide-react'
+import { Bot, Moon, RefreshCw, SendHorizontal, Square, Sun, User } from 'lucide-react'
 import { endpoints } from '../lib/api'
+import { useTheme } from '../lib/theme'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -17,6 +18,7 @@ export default function Chat() {
   const bottomRef = useRef<HTMLDivElement>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
   const queryClient = useQueryClient()
+  const { theme, toggleTheme } = useTheme()
 
   const statusQuery = useQuery({
     queryKey: ['sync-status'],
@@ -70,12 +72,23 @@ export default function Chat() {
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
-        <div className="flex h-6 w-6 items-center justify-center rounded-md bg-primary text-primary-foreground">
-          <Bot className="h-3.5 w-3.5" />
+      <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border px-4">
+        <div className="flex items-center gap-2">
+          <div className="flex h-6 w-6 items-center justify-center rounded-md bg-primary text-primary-foreground">
+            <Bot className="h-3.5 w-3.5" />
+          </div>
+          <span className="text-sm font-semibold">allocator-qa</span>
+          <span className="text-xs text-muted-foreground">Investor &amp; fund data assistant</span>
         </div>
-        <span className="text-sm font-semibold">allocator-qa</span>
-        <span className="text-xs text-muted-foreground">Investor &amp; fund data assistant</span>
+        <button
+          className="al-btn al-btn--ghost al-btn--icon"
+          type="button"
+          onClick={toggleTheme}
+          aria-label="Toggle theme"
+          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        >
+          {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+        </button>
       </header>
 
       <main className="flex flex-1 flex-col gap-3 overflow-hidden p-4">
